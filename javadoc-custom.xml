@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<project default="javadoc">
+    <target name="javadoc">
+        <javadoc
+				access="private"
+				classpath="C:\Prog\pleiades\java\8\lib\tools.jar"
+        		encoding="utf-8"
+				packagenames="jp.co.gyoseiq.ac.z1.util">
+        	<sourcepath>
+        		<pathelement location="src"/>
+       		</sourcepath>
+            <doclet name="jp.co.gyoseiq.ac.z1.util.AcCsvDoclet" path="build\classes"/>
+        </javadoc>
+    </target>
+</project>
+
+<!--
+ 				additionalparam="-encoding UTF-8 -charset UTF-8"
+-->
