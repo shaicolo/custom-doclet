@@ -8,6 +8,7 @@ import java.io.PrintWriter;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -38,11 +39,13 @@ import com.sun.javadoc.Tag;
  * @author shaicolo
  */
 public class AcCsvDoclet extends Doclet {
-	static Context cx = new Context();
+	static Context cx;
 	static DocComparator comparator = new DocComparator();
 
 	public static boolean start(RootDoc rootDoc) {
 
+		cx = new Context(rootDoc.options());
+		
 		printValue("currentDir", new File("aaa").getAbsolutePath());
 		for (ClassDoc c : rootDoc.classes()) {
 			printClass(c);
@@ -58,15 +61,34 @@ public class AcCsvDoclet extends Doclet {
 	private static class Context implements Serializable {
 		transient private final PrintWriter sysout = new PrintWriter(System.out);
 		transient PrintWriter out;
+		File destdir;
 		ClassDoc currentClass;
+		Map<String, String> params = new HashMap<String, String>();
 		Map<String, Set<String>> overloadMap;
 
-		public Context() {
+		public Context(String[][] args) {
 			out = sysout;
-		}
 
+			// デフォルトパラメータ
+			// TODO: xmlからパラメータを渡す方法
+			params.put("destdir", "work/progSpec");
+			params.put("revision", "リビジョン");
+
+			// 引数パラメータ
+//			for (String[] arg : args) {
+//				//cx.params.put(arg[0], Arrays.copyOfRange(arg, 1, arg.length - 1));
+//				System.out.println("params: " + Arrays.toString(arg));
+//			}
+
+			// 出力フォルダー作成
+			destdir = new File(params.get("destdir"));
+			if (!destdir.exists()) {
+				destdir.mkdirs();
+			}
+		}
+		
 		void startClass(ClassDoc c) {
-			System.out.println("Start Class:" + c.qualifiedName());
+			System.out.println("Class:" + c.qualifiedName());
 
 			// 現在のクラス情報を設定
 			currentClass = c;
@@ -76,7 +98,11 @@ public class AcCsvDoclet extends Doclet {
 				if (out != null && out != sysout) {
 					out.close();
 				}
-				out = new PrintWriter(new OutputStreamWriter(new FileOutputStream("out/" + c.qualifiedName() + ".txt"), "UTF-8"));
+				File outf = new File(destdir, c.qualifiedName() + ".txt");
+				System.out.println(" -> " + outf.getAbsolutePath());
+				out = new PrintWriter(
+						new OutputStreamWriter(new FileOutputStream(outf), "UTF-8")
+				);
 			} catch (IOException ex) {
 				throw new RuntimeException(ex);
 			}
@@ -161,7 +187,7 @@ public class AcCsvDoclet extends Doclet {
 			}
 
 			List<MethodDoc> meth = new ArrayList<MethodDoc>(Arrays.asList(c.methods(true)));
-			meth.sort(comparator);
+			Collections.sort(meth, comparator);
 
 			// static
 			List<MethodDoc> meth_static = filterOut(meth, new FilterProc<MethodDoc>() {
@@ -220,8 +246,8 @@ public class AcCsvDoclet extends Doclet {
 			print変数一覧(0, null);
 
 			int fno = 0;
-			List<FieldDoc> flds = new ArrayList<FieldDoc>(Arrays.asList(c.fields(true)));
-			flds.sort(comparator);
+			ArrayList<FieldDoc> flds = new ArrayList<FieldDoc>(Arrays.asList(c.fields(true)));
+			Collections.sort(flds, comparator);
 
 			// final
 			List<FieldDoc> flds_final = filterOut(flds, new FilterProc<FieldDoc>() {
@@ -308,10 +334,10 @@ public class AcCsvDoclet extends Doclet {
 		}
 
 		// ------------------------------------------------------------------------------
-		// 名前
+		// メソッド名
 		// ------------------------------------------------------------------------------
 		if (m == null) {
-			buf.add("名前");
+			buf.add("メソッド名");
 		} else {
 			buf.add(m.name());
 		}
@@ -326,10 +352,10 @@ public class AcCsvDoclet extends Doclet {
 		}
 
 		// ------------------------------------------------------------------------------
-		// 戻り値の型
+		// 戻り値
 		// ------------------------------------------------------------------------------
 		if (m == null) {
-			buf.add("型");
+			buf.add("戻り値");
 		} else {
 			if (m.isMethod()) {
 				StringBuffer b = new StringBuffer();
@@ -350,7 +376,7 @@ public class AcCsvDoclet extends Doclet {
 		// 引数
 		// ------------------------------------------------------------------------------
 		if (m == null) {
-			buf.add("引数");
+			buf.add("引　数");
 		} else {
 			Map<String, String> paramCommentMap = new HashMap<String, String>();
 			List<String> args = new ArrayList<String>();
@@ -385,16 +411,16 @@ public class AcCsvDoclet extends Doclet {
 		// 機能
 		// ------------------------------------------------------------------------------
 		if (m == null) {
-			buf.add("機能");
+			buf.add("機　能");
 		} else {
 			buf.add(deleteHtmlTag(m.commentText()));
 		}
 
 		// ------------------------------------------------------------------------------
-		// 備考・アノテーション
+		// 備考・アノテーション・AF呼出
 		// ------------------------------------------------------------------------------
 		if (m == null) {
-			buf.add("備考・アノテーション");
+			buf.add("備考・アノテーション・AF呼出");
 		} else {
 			// TODO: とりあえずアノテーションのみ
 			List<String> b = new ArrayList<String>();
@@ -436,8 +462,6 @@ public class AcCsvDoclet extends Doclet {
 	private static void print変数一覧(int no, FieldDoc m) {
 		List<String> buf = new ArrayList<String>();
 
-		Set<Tag> tagSet = new HashSet<Tag>();
-
 		// ------------------------------------------------------------------------------
 		// No.
 		// ------------------------------------------------------------------------------
@@ -448,21 +472,12 @@ public class AcCsvDoclet extends Doclet {
 		}
 
 		// ------------------------------------------------------------------------------
-		// 名前
+		// 変数名
 		// ------------------------------------------------------------------------------
 		if (m == null) {
-			buf.add("名前");
+			buf.add("変数");
 		} else {
 			buf.add(m.name());
-		}
-
-		// ------------------------------------------------------------------------------
-		// アクセス
-		// ------------------------------------------------------------------------------
-		if (m == null) {
-			buf.add("アクセス");
-		} else {
-			buf.add(m.isPrivate() ? "private" : m.isProtected() ? "protected" : m.isPublic() ? "public" : m.isPackagePrivate() ? "" : "?");
 		}
 
 		// ------------------------------------------------------------------------------
@@ -475,10 +490,20 @@ public class AcCsvDoclet extends Doclet {
 		}
 
 		// ------------------------------------------------------------------------------
-		// 値
+		// アクセス
 		// ------------------------------------------------------------------------------
 		if (m == null) {
-			buf.add("値");
+			buf.add("アクセス");
+		} else {
+			buf.add(m.isPrivate() ? "private" : m.isProtected() ? "protected" : m.isPublic() ? "public" : m.isPackagePrivate() ? "" : "?");
+		}
+
+		// ------------------------------------------------------------------------------
+		// 初期値
+		// ------------------------------------------------------------------------------
+		// TODO: Doclet APIでは定数の場合にしか初期値を抽出できない模様
+		if (m == null) {
+			buf.add("初期値");
 		} else {
 			if (m.constantValueExpression() != null) {
 				buf.add(m.constantValueExpression());
@@ -491,7 +516,7 @@ public class AcCsvDoclet extends Doclet {
 		// 機能
 		// ------------------------------------------------------------------------------
 		if (m == null) {
-			buf.add("機能");
+			buf.add("機　能");
 		} else {
 			buf.add(deleteHtmlTag(m.commentText()));
 		}
@@ -564,6 +589,15 @@ public class AcCsvDoclet extends Doclet {
 			buf.add("コメント");
 		} else {
 			buf.add(m.getRawCommentText());
+		}
+
+		// ------------------------------------------------------------------------------
+		// リビジョン
+		// ------------------------------------------------------------------------------
+		if (m == null) {
+			buf.add("リビジョン");
+		} else {
+			buf.add(cx.params.get("revision"));
 		}
 
 		// ------------------------------------------------------------------------------
