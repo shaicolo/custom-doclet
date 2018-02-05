@@ -24,6 +24,7 @@ import com.sun.javadoc.Doc;
 import com.sun.javadoc.Doclet;
 import com.sun.javadoc.ExecutableMemberDoc;
 import com.sun.javadoc.FieldDoc;
+import com.sun.javadoc.LanguageVersion;
 import com.sun.javadoc.MemberDoc;
 import com.sun.javadoc.MethodDoc;
 import com.sun.javadoc.ParamTag;
@@ -31,6 +32,7 @@ import com.sun.javadoc.Parameter;
 import com.sun.javadoc.ProgramElementDoc;
 import com.sun.javadoc.RootDoc;
 import com.sun.javadoc.Tag;
+import com.sun.javadoc.Type;
 
 /**
  * プログラム仕様書に記述するドキュメント情報を<b>CSV<b>として出力するDocletです。
@@ -54,6 +56,27 @@ public class AcCsvDoclet extends Doclet {
 		return true;
 	}
 
+	// Java1.5記法をサポート
+	public static LanguageVersion languageVersion() {
+		return LanguageVersion.JAVA_1_5;
+	}
+	
+	// サポートする追加オプションの定義
+	public static int optionLength(String option) {
+		
+		// 出力フォルダー指定
+		if (option.equals("-destdir")) {
+			return 2;
+		}
+		
+		// 表示リビジョン番号指定
+		if (option.equals("-revision")) {
+			return 2;
+		}
+		
+		return 0;
+	}
+
 	/**
 	 * コンテキスト
 	 * @author shaicolo
@@ -63,28 +86,28 @@ public class AcCsvDoclet extends Doclet {
 		transient PrintWriter out;
 		File destdir;
 		ClassDoc currentClass;
-		Map<String, String> params = new HashMap<String, String>();
+		Map<String, String[]> params = new HashMap<String, String[]>();
 		Map<String, Set<String>> overloadMap;
 
 		public Context(String[][] args) {
 			out = sysout;
 
 			// デフォルトパラメータ
-			// TODO: xmlからパラメータを渡す方法
-			params.put("destdir", "work/progSpec");
-			params.put("revision", "リビジョン");
+			params.put("-destdir", new String[]{"work/progSpec"});
+			params.put("-revision", new String[]{"リビジョン"});
 
 			// 引数パラメータ
-//			for (String[] arg : args) {
-//				//cx.params.put(arg[0], Arrays.copyOfRange(arg, 1, arg.length - 1));
-//				System.out.println("params: " + Arrays.toString(arg));
-//			}
+			for (String[] arg : args) {
+				//System.out.println("params: " + Arrays.toString(arg));
+				if (optionLength(arg[0]) > 1) {
+					params.put(arg[0], Arrays.copyOfRange(arg, 1, arg.length));
+				} else if (optionLength(arg[0]) == 1) {
+					params.put(arg[0], new String[0]);
+				}
+			}
 
 			// 出力フォルダー作成
-			destdir = new File(params.get("destdir"));
-			if (!destdir.exists()) {
-				destdir.mkdirs();
-			}
+			destdir = new File(params.get("-destdir")[0]);
 		}
 		
 		void startClass(ClassDoc c) {
@@ -98,7 +121,12 @@ public class AcCsvDoclet extends Doclet {
 				if (out != null && out != sysout) {
 					out.close();
 				}
-				File outf = new File(destdir, c.qualifiedName() + ".txt");
+				File pkgdir = new File(destdir, c.containingPackage().name());
+				File outdir = new File(pkgdir, c.position().file().getName());
+				if (!outdir.exists()) {
+					outdir.mkdirs();
+				}
+				File outf = new File(outdir, c.name() + ".txt");
 				System.out.println(" -> " + outf.getAbsolutePath());
 				out = new PrintWriter(
 						new OutputStreamWriter(new FileOutputStream(outf), "UTF-8")
@@ -163,6 +191,9 @@ public class AcCsvDoclet extends Doclet {
 		separator("CLASS START " + c.name());
 		printValue("name", c.name());
 		printValue("package", c.containingPackage().name());
+		printValue("containingClass", c.containingClass() == null ? "-" : c.containingClass().name());
+		printValue("pos.file", c.position().file().getName());
+		printValue("pos.line", c.position().line());
 		for (ClassDoc itf : c.interfaces()) {
 			printValue("interface", itf.qualifiedName());
 		}
@@ -178,18 +209,31 @@ public class AcCsvDoclet extends Doclet {
 			printメソッド一覧(0, null);
 
 			int mno = 0;
+
+			// ---------------------------------------
+			// コンストラクタ
+			// ---------------------------------------
 			separator2("コンストラクタ");
 			ExecutableMemberDoc[] cons = c.constructors(true);
+
+			// 名前順にソート
 			Arrays.sort(cons, comparator);
+			
+			// 出力
 			for (ExecutableMemberDoc em : cons) {
 				printメソッド一覧(++mno, em);
 				javadoc_method.add(getJavadoc生成用コメント(mno, em));
 			}
 
+			// ---------------------------------------
+			// メソッド
+			// ---------------------------------------
 			List<MethodDoc> meth = new ArrayList<MethodDoc>(Arrays.asList(c.methods(true)));
+
+			// 名前順にソート
 			Collections.sort(meth, comparator);
 
-			// static
+			// クラスメソッド（staticメソッド）仕分け
 			List<MethodDoc> meth_static = filterOut(meth, new FilterProc<MethodDoc>() {
 				@Override
 				public boolean filter(MethodDoc value) {
@@ -197,7 +241,7 @@ public class AcCsvDoclet extends Doclet {
 				}
 			});
 
-			// abstract
+			// インターフェースメソッド（abstractメソッド）仕分け
 			List<MethodDoc> meth_abstract = filterOut(meth, new FilterProc<MethodDoc>() {
 				@Override
 				public boolean filter(MethodDoc value) {
@@ -205,7 +249,7 @@ public class AcCsvDoclet extends Doclet {
 				}
 			});
 
-			// final
+			// 継承禁止メソッド（finalメソッド）仕分け
 			List<MethodDoc> meth_final = filterOut(meth, new FilterProc<MethodDoc>() {
 				@Override
 				public boolean filter(MethodDoc value) {
@@ -213,20 +257,24 @@ public class AcCsvDoclet extends Doclet {
 				}
 			});
 
-			separator2("メソッド");
-			for (ExecutableMemberDoc em : meth) {
-				printメソッド一覧(++mno, em);
-				javadoc_method.add(getJavadoc生成用コメント(mno, em));
-			}
+			// ※ 残ったメソッドがインスタンスメソッド
+			// ※ static, abstract, final はそれぞれ両立しないので、上記処理は順不同で問題無い
 
-			separator2("staticメソッド");
-			for (ExecutableMemberDoc em : meth_static) {
+			// 出力（mnoはコンストラクタから継続）
+			separator2("インスタンスメソッド");
+			for (ExecutableMemberDoc em : meth) {
 				printメソッド一覧(++mno, em);
 				javadoc_method.add(getJavadoc生成用コメント(mno, em));
 			}
 
 			separator2("インターフェースメソッド");
 			for (ExecutableMemberDoc em : meth_abstract) {
+				printメソッド一覧(++mno, em);
+				javadoc_method.add(getJavadoc生成用コメント(mno, em));
+			}
+
+			separator2("クラスメソッド");
+			for (ExecutableMemberDoc em : meth_static) {
 				printメソッド一覧(++mno, em);
 				javadoc_method.add(getJavadoc生成用コメント(mno, em));
 			}
@@ -245,11 +293,11 @@ public class AcCsvDoclet extends Doclet {
 			// 見出し出力
 			print変数一覧(0, null);
 
-			int fno = 0;
+			// 名前順にソート
 			ArrayList<FieldDoc> flds = new ArrayList<FieldDoc>(Arrays.asList(c.fields(true)));
 			Collections.sort(flds, comparator);
 
-			// final
+			// 定数（finalフィールド）仕分け
 			List<FieldDoc> flds_final = filterOut(flds, new FilterProc<FieldDoc>() {
 				@Override
 				public boolean filter(FieldDoc value) {
@@ -257,13 +305,32 @@ public class AcCsvDoclet extends Doclet {
 				}
 			});
 
+			// クラス変数（staticフィールド）仕分け
+			List<FieldDoc> flds_static = filterOut(flds, new FilterProc<FieldDoc>() {
+				@Override
+				public boolean filter(FieldDoc value) {
+					return value.isStatic();
+				}
+			});
+			
+			// ※残ったフィールドがインスタンス変数
+
+			// 出力
+			int fno = 0;
+
 			separator2("定数");
 			for (FieldDoc f : flds_final) {
 				print変数一覧(++fno, f);
 				javadoc_field.add(getJavadoc生成用コメント(fno, f));
 			}
 
-			separator2("変数");
+			separator2("クラス変数");
+			for (FieldDoc f : flds_static) {
+				print変数一覧(++fno, f);
+				javadoc_field.add(getJavadoc生成用コメント(fno, f));
+			}
+
+			separator2("インスタンス変数");
 			for (FieldDoc f : flds) {
 				print変数一覧(++fno, f);
 				javadoc_field.add(getJavadoc生成用コメント(fno, f));
@@ -324,11 +391,23 @@ public class AcCsvDoclet extends Doclet {
 			}
 
 			// オーバーライド判定
+			boolean bOverride = false;
 			if (m.isMethod()) {
 				MethodDoc m2 = (MethodDoc) m;
 				if (m2.overriddenMethod() != null) {
-					b.add("オーバーライド");
+					bOverride = true;
 				}
+			}
+			// Overrideアノテーションも確認
+			for (AnnotationDesc an : m.annotations()) {
+				if (an.annotationType().name().equals("Override")) {
+					bOverride = true;
+					break;
+				}
+			}
+			
+			if (bOverride) {
+				b.add("オーバーライド");
 			}
 			buf.add( join(b, "\n"));
 		}
@@ -359,10 +438,10 @@ public class AcCsvDoclet extends Doclet {
 		} else {
 			if (m.isMethod()) {
 				StringBuffer b = new StringBuffer();
-				b.append(((MethodDoc)m).returnType().qualifiedTypeName());
+				b.append(typeName(((MethodDoc)m).returnType()));
 				b.append(" ");
 				for (Tag t : m.tags("@return")) {
-					b.append(t.text());
+					b.append(deleteHtmlTag(t.text()));
 					tagSet.add(t);
 				}
 				buf.add(b.toString());
@@ -388,7 +467,7 @@ public class AcCsvDoclet extends Doclet {
 				tagSet.add(p);
 			}
 			for (Parameter p : m.parameters()) {
-				StringBuffer b = new StringBuffer(p.typeName());	// 型名
+				StringBuffer b = new StringBuffer(typeName(p.type()));	// 型名
 				b.append(" ");
 				if (paramCommentMap.containsKey(p.name())) {
 					// paramタグの説明を出力
@@ -413,7 +492,7 @@ public class AcCsvDoclet extends Doclet {
 		if (m == null) {
 			buf.add("機　能");
 		} else {
-			buf.add(deleteHtmlTag(m.commentText()));
+			buf.add(deleteHtmlTag(description(m.commentText())));
 		}
 
 		// ------------------------------------------------------------------------------
@@ -423,29 +502,7 @@ public class AcCsvDoclet extends Doclet {
 			buf.add("備考・アノテーション・AF呼出");
 		} else {
 			// TODO: とりあえずアノテーションのみ
-			List<String> b = new ArrayList<String>();
-			for (AnnotationDesc an : m.annotations()) {
-				// オーバーライドは処理済みなのでスキップ
-				if (an.annotationType().name().equals("Override")) {
-					continue;
-				}
-				StringBuffer sb = new StringBuffer(an.annotationType().name());
-				if (an.elementValues().length > 0) {
-					sb.append("(");
-					boolean first = true;
-					for (AnnotationDesc.ElementValuePair ae : an.elementValues()) {
-						if (first) {
-							first = false;
-						} else {
-							sb.append(", ");
-						}
-						sb.append(ae.element().name() + "=" + ae.value().value());
-					}
-					sb.append(")");
-				}
-			}
-
-			buf.add(join(b, "\n"));
+			buf.add(annotation(m));
 		}
 
 		// ------------------------------------------------------------------------------
@@ -486,7 +543,7 @@ public class AcCsvDoclet extends Doclet {
 		if (m == null) {
 			buf.add("型");
 		} else {
-			buf.add(m.type().qualifiedTypeName());
+			buf.add(typeName(m.type()));
 		}
 
 		// ------------------------------------------------------------------------------
@@ -518,7 +575,7 @@ public class AcCsvDoclet extends Doclet {
 		if (m == null) {
 			buf.add("機　能");
 		} else {
-			buf.add(deleteHtmlTag(m.commentText()));
+			buf.add(deleteHtmlTag(description(m.commentText())));
 		}
 
 		// ------------------------------------------------------------------------------
@@ -528,25 +585,7 @@ public class AcCsvDoclet extends Doclet {
 			buf.add("備考・アノテーション");
 		} else {
 			// TODO: とりあえずアノテーションのみ
-			List<String> b = new ArrayList<String>();
-			for (AnnotationDesc an : m.annotations()) {
-				StringBuffer sb = new StringBuffer(an.annotationType().name());
-				if (an.elementValues().length > 0) {
-					sb.append("(");
-					boolean first = true;
-					for (AnnotationDesc.ElementValuePair ae : an.elementValues()) {
-						if (first) {
-							first = false;
-						} else {
-							sb.append(", ");
-						}
-						sb.append(ae.element().name() + "=" + ae.value().value());
-					}
-					sb.append(")");
-				}
-			}
-
-			buf.add(join(b, "\n"));
+			buf.add(annotation(m));
 		}
 
 		// ------------------------------------------------------------------------------
@@ -588,7 +627,7 @@ public class AcCsvDoclet extends Doclet {
 		if (m == null) {
 			buf.add("コメント");
 		} else {
-			buf.add(m.getRawCommentText());
+			buf.add(fullComment(m.getRawCommentText()));
 		}
 
 		// ------------------------------------------------------------------------------
@@ -597,7 +636,7 @@ public class AcCsvDoclet extends Doclet {
 		if (m == null) {
 			buf.add("リビジョン");
 		} else {
-			buf.add(cx.params.get("revision"));
+			buf.add(cx.params.get("-revision")[0]);
 		}
 
 		// ------------------------------------------------------------------------------
@@ -676,7 +715,7 @@ public class AcCsvDoclet extends Doclet {
 
 			}
 
-			printValue("comment", m.commentText());
+			printValue("comment", description(m.commentText()));
 			for (Tag t : m.tags()) {
 				if (! tagSet.contains(t)) {
 					printValue("tag(" + t.name() + ")", t.text());
@@ -694,9 +733,9 @@ public class AcCsvDoclet extends Doclet {
 		if (label != null) {
 			label = " " + label + " ";
 		}
-		cx.out.println("------------------------------------------------------------");
-		cx.out.println("--- " + label);
-		cx.out.println("------------------------------------------------------------");
+		cx.out.println("#-----------------------------------------------------------");
+		cx.out.println("# " + label);
+		cx.out.println("#-----------------------------------------------------------");
 	}
 
 	/**
@@ -747,6 +786,13 @@ public class AcCsvDoclet extends Doclet {
 		return buf.toString();
 	}
 
+	/**
+	 * リストの各要素に対して変換処理を適用し、変換後のリストを返す。
+	 * 元のリストは変更されない。
+	 * @param arr
+	 * @param proc 変換処理
+	 * @return
+	 */
 	private static <T>  List<T> map(List<T> arr, MapProc<T> proc) {
 		List<T> ret = new ArrayList<T>();
 		for (T value : arr) {
@@ -758,6 +804,13 @@ public class AcCsvDoclet extends Doclet {
 		public T proc(T value);
 	}
 
+	/**
+	 * リストに対してフィルターを適用し、該当する要素のリストを返す。
+	 * 元のリストは変更されない。
+	 * @param arr
+	 * @param filter フィルター処理
+	 * @return
+	 */
 	private static <T>  List<T> filter(List<T> arr, FilterProc<T> filter) {
 		List<T> ret = new ArrayList<T>();
 		for (Iterator<T> i = arr.iterator(); i.hasNext(); ) {
@@ -768,6 +821,13 @@ public class AcCsvDoclet extends Doclet {
 		}
 		return ret;
 	}
+	/**
+	 * リストに対してフィルターを適用し、該当する要素のリストを返す。
+	 * 該当する要素は元のリストから削除される。
+	 * @param arr
+	 * @param filter フィルター処理
+	 * @return
+	 */
 	private static <T>  List<T> filterOut(List<T> arr, FilterProc<T> filter) {
 		List<T> ret = new ArrayList<T>();
 		for (Iterator<T> i = arr.iterator(); i.hasNext(); ) {
@@ -802,8 +862,68 @@ public class AcCsvDoclet extends Doclet {
 		return sb.toString();
 	}
 
+	// HTMLタグおよび{@link xxx}形式のタグを除去
 	private static String deleteHtmlTag(String text) {
-		return text.replaceAll("<.*?>", "");
+		return text.replaceAll("<.*?>", "").replaceAll("\\{@[^ }]* ([^}]*)\\}", "$1");
+	}
+	
+	private static String description(String commentText) {
+		return commentText.replaceAll("^ ", "").replaceAll("\n ", "\n").replaceAll("\n$", "");
+	}
+	
+	private static String fullComment(String rawCommentText) {
+		if (rawCommentText == null || rawCommentText.length() == 0) {
+			return "-";
+		} else {
+			return "/**\n *" + rawCommentText.replaceAll("\n", "\n *") + "/";
+		}
+	}
+	
+	// javadocの引数の型や戻り値の型に記載する型名を編集
+	// パッケージ修飾…なし
+	// パラメータ型引数…あり
+	// 配列表示…あり
+	private static String typeName(Type t) {
+		StringBuffer buf = new StringBuffer(t.typeName());
+		if (t.asParameterizedType() != null) {
+			buf.append("<");
+			buf.append(join(
+				map(Arrays.asList((Object[]) t.asParameterizedType().typeArguments()), new MapProc<Object>() {
+					@Override
+					public Object proc(Object value) {
+						Type t = (Type) value;
+						return typeName(t);
+					}
+				}), ","
+			));
+			buf.append(">");
+		}
+		buf.append(t.dimension());
+
+		return buf.toString();
+	}
+	
+	private static String annotation(ProgramElementDoc m) {
+		List<String> b = new ArrayList<String>();
+		for (AnnotationDesc an : m.annotations()) {
+			StringBuffer sb = new StringBuffer("@");
+			sb.append(an.annotationType().name());
+			if (an.elementValues().length > 0) {
+				sb.append("(");
+				boolean first = true;
+				for (AnnotationDesc.ElementValuePair ae : an.elementValues()) {
+					if (first) {
+						first = false;
+					} else {
+						sb.append(", ");
+					}
+					sb.append(ae.element().name() + "=" + ae.value().value());
+				}
+				sb.append(")");
+			}
+		}
+
+		return join(b, "\n");
 	}
 
 	private static class DocComparator implements Comparator<Doc> {
