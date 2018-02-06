@@ -241,7 +241,7 @@ public class AcCsvDoclet extends Doclet {
 				}
 			});
 
-			// インターフェースメソッド（abstractメソッド）仕分け
+			// 抽象メソッド（abstractメソッド）仕分け
 			List<MethodDoc> meth_abstract = filterOut(meth, new FilterProc<MethodDoc>() {
 				@Override
 				public boolean filter(MethodDoc value) {
@@ -267,7 +267,7 @@ public class AcCsvDoclet extends Doclet {
 				javadoc_method.add(getJavadoc生成用コメント(mno, em));
 			}
 
-			separator2("インターフェースメソッド");
+			separator2("抽象メソッド");
 			for (ExecutableMemberDoc em : meth_abstract) {
 				printメソッド一覧(++mno, em);
 				javadoc_method.add(getJavadoc生成用コメント(mno, em));
@@ -304,6 +304,9 @@ public class AcCsvDoclet extends Doclet {
 					return value.isFinal();
 				}
 			});
+			// enum定数を追加して名前順ソート
+			flds_final.addAll(Arrays.asList(c.enumConstants()));
+			Collections.sort(flds_final, comparator);
 
 			// クラス変数（staticフィールド）仕分け
 			List<FieldDoc> flds_static = filterOut(flds, new FilterProc<FieldDoc>() {
@@ -366,7 +369,10 @@ public class AcCsvDoclet extends Doclet {
 	private static void printメソッド一覧(int no, ExecutableMemberDoc m) {
 		List<String> buf = new ArrayList<String>();
 
-		Set<Tag> tagSet = new HashSet<Tag>();
+		Set<Tag> tagSet = new HashSet<Tag>();	// 処理済みタグ
+		Set<String> annoSet = new HashSet<String>(); // 処理済みアノテーション
+		StringBuffer additionalDescription = new StringBuffer();	// 機能部分への追加コメント（引数・戻り値の詳細）
+		List<String> bikou = new ArrayList<String>();	// 備考・アノテーション
 
 		// ------------------------------------------------------------------------------
 		// No.
@@ -392,22 +398,28 @@ public class AcCsvDoclet extends Doclet {
 
 			// オーバーライド判定
 			boolean bOverride = false;
+			MethodDoc mOverride = null;
 			if (m.isMethod()) {
-				MethodDoc m2 = (MethodDoc) m;
-				if (m2.overriddenMethod() != null) {
-					bOverride = true;
-				}
-			}
-			// Overrideアノテーションも確認
-			for (AnnotationDesc an : m.annotations()) {
-				if (an.annotationType().name().equals("Override")) {
-					bOverride = true;
-					break;
+				mOverride = overrides((MethodDoc)m);
+				
+				// Overrideアノテーションも確認
+				for (AnnotationDesc an : m.annotations()) {
+					if (an.annotationType().name().equals("Override")) {
+						bOverride = true;
+						annoSet.add(an.toString());
+					}
 				}
 			}
 			
-			if (bOverride) {
+			if (bOverride || mOverride != null) {
 				b.add("オーバーライド");
+				
+				// オーバーライドするメソッドが取得できていれば備考を追加
+				if (mOverride != null) {
+					bikou.add("オーバーライド: " + mOverride.containingClass().name());
+				} else {
+					System.err.println("WARNING: オーバーライド先が取得できませんでした: " + m);
+				}
 			}
 			buf.add( join(b, "\n"));
 		}
@@ -441,7 +453,19 @@ public class AcCsvDoclet extends Doclet {
 				b.append(typeName(((MethodDoc)m).returnType()));
 				b.append(" ");
 				for (Tag t : m.tags("@return")) {
-					b.append(deleteHtmlTag(t.text()));
+					
+					// 戻り値コメントを取得
+					String retComment = deleteHtmlTag(t.text());
+					
+					//（最初の行のみ）
+					String retCommentFirst = retComment.replaceAll("\\n.*", "");
+
+					// 戻り値欄の説明には先頭行のみを追加し、複数行ある場合は機能覧に全体の説明を追加。
+					b.append(retCommentFirst);
+					if (!retComment.equals(retCommentFirst)) {
+						additionalDescription.append("\n\n");
+						additionalDescription.append("※" + retComment);
+					}
 					tagSet.add(t);
 				}
 				buf.add(b.toString());
@@ -462,8 +486,19 @@ public class AcCsvDoclet extends Doclet {
 
 			// paramタグを先に取得
 			for (ParamTag p : m.paramTags()) {
-				// paramコメントを取得（最初の改行以降は削除）
-				paramCommentMap.put(p.parameterName(), deleteHtmlTag(p.parameterComment()).replaceAll("\\n.*", ""));
+
+				// paramコメントを取得
+				String paramComment = deleteHtmlTag(p.parameterComment());
+
+				//（最初の行のみ）
+				String paramCommentFirst = paramComment.replaceAll("\\n.*", "");
+
+				// 引数欄の説明には先頭行のみを追加し、複数行ある場合は機能覧に全体の説明を追加。
+				paramCommentMap.put(p.parameterName(), paramCommentFirst);
+				if (!paramComment.equals(paramCommentFirst)) {
+					additionalDescription.append("\n\n");
+					additionalDescription.append("※" + paramComment);
+				}
 				tagSet.add(p);
 			}
 			for (Parameter p : m.parameters()) {
@@ -492,7 +527,7 @@ public class AcCsvDoclet extends Doclet {
 		if (m == null) {
 			buf.add("機　能");
 		} else {
-			buf.add(deleteHtmlTag(description(m.commentText())));
+			buf.add(deleteHtmlTag(description(m.commentText())) + additionalDescription.toString());
 		}
 
 		// ------------------------------------------------------------------------------
@@ -501,8 +536,9 @@ public class AcCsvDoclet extends Doclet {
 		if (m == null) {
 			buf.add("備考・アノテーション・AF呼出");
 		} else {
-			// TODO: とりあえずアノテーションのみ
-			buf.add(annotation(m));
+			// TODO: とりあえずアノテーションのみ＋オーバーライド対象
+			bikou.add(annotation(m, annoSet));
+			buf.add(join(bikou, "\n"));
 		}
 
 		// ------------------------------------------------------------------------------
@@ -518,6 +554,7 @@ public class AcCsvDoclet extends Doclet {
 	 */
 	private static void print変数一覧(int no, FieldDoc m) {
 		List<String> buf = new ArrayList<String>();
+		Set<String> annoSet = new HashSet<String>(); // 処理済みアノテーション
 
 		// ------------------------------------------------------------------------------
 		// No.
@@ -585,7 +622,7 @@ public class AcCsvDoclet extends Doclet {
 			buf.add("備考・アノテーション");
 		} else {
 			// TODO: とりあえずアノテーションのみ
-			buf.add(annotation(m));
+			buf.add(annotation(m, annoSet));
 		}
 
 		// ------------------------------------------------------------------------------
@@ -642,87 +679,6 @@ public class AcCsvDoclet extends Doclet {
 		// ------------------------------------------------------------------------------
 
 		return buf;
-	}
-
-	private static void printMembers(String label, ProgramElementDoc[] ms) {
-		for (ProgramElementDoc m : ms) {
-			separator(label + " START " + m.name());
-			Set<Tag> tagSet = new HashSet<Tag>();
-
-			printValue("name", m.name());
-			printValue("final?", m.isFinal());
-			printValue("static?", m.isStatic());
-			printValue("access", m.isPrivate() ? "private" : m.isProtected() ? "protected" : m.isPublic() ? "public" : m.isPackagePrivate() ? "package private" : "unknown");
-			for (AnnotationDesc an : m.annotations()) {
-				String buf = an.annotationType().name();
-				if (an.elementValues().length > 0) {
-					buf += "(";
-					boolean first = true;
-					for (AnnotationDesc.ElementValuePair ae : an.elementValues()) {
-						if (first) {
-							first = false;
-						} else {
-							buf += ", ";
-						}
-						buf += ae.element().name() + "=" + ae.value().value();
-					}
-					buf += ")";
-				}
-				printValue("annotation", buf);
-			}
-			if (m instanceof ExecutableMemberDoc) {
-				ExecutableMemberDoc em = (ExecutableMemberDoc) m;
-				printValue("native?", em.isNative());
-				printValue("synchronized?", em.isSynchronized());
-
-				Map<String, String> paramCommentMap = new HashMap<String, String>();
-				for (ParamTag p : em.paramTags()) {
-					printValue("param " + p.parameterName(), p.parameterComment());
-					paramCommentMap.put(p.parameterName(), p.parameterComment());
-					tagSet.add(p);
-				}
-
-				String args;
-				if (em.parameters().length > 0) {
-					args = "";
-					boolean first = true;
-					for (Parameter p : em.parameters()) {
-						if (first) {
-							first = false;
-						} else {
-							args += ",\n";
-						}
-						args += p.typeName() + " " + p.name();
-						if (paramCommentMap.containsKey(p.name())) {
-							args += " " + paramCommentMap.get(p.name());
-						}
-					}
-				} else {
-					args = "なし";
-				}
-				printValue("args", args);
-			}
-			if (m instanceof FieldDoc) {
-				FieldDoc f = (FieldDoc) m;
-				printValue("type", f.type().qualifiedTypeName());
-				if (f.constantValueExpression() != null) {
-					printValue("value", f.constantValueExpression());
-				}
-				printValue("transient?", f.isTransient());
-				printValue("volatile?", f.isVolatile());
-			}
-			if (m instanceof ExecutableMemberDoc) {
-
-			}
-
-			printValue("comment", description(m.commentText()));
-			for (Tag t : m.tags()) {
-				if (! tagSet.contains(t)) {
-					printValue("tag(" + t.name() + ")", t.text());
-				}
-			}
-			separator(label + " END");
-		}
 	}
 
 	/**
@@ -864,7 +820,10 @@ public class AcCsvDoclet extends Doclet {
 
 	// HTMLタグおよび{@link xxx}形式のタグを除去
 	private static String deleteHtmlTag(String text) {
-		return text.replaceAll("<.*?>", "").replaceAll("\\{@[^ }]* ([^}]*)\\}", "$1");
+		return text.replaceAll("<[^>]*>", "")	// タグ削除
+				.replaceAll("[\r\n \t]*$", "")		// 末尾空白削除
+				.replaceAll("\n([ \t\r]*\n)+", "\n\n")		// 連続する空行を１つの空行にする
+				.replaceAll("\\{@[^ }]* +([^ }]*)\\}|\\{@[^ }]* +[^ }]* +([^}]*)\\}", "$1$2"); // @link形式のタグを削除;
 	}
 	
 	private static String description(String commentText) {
@@ -903,9 +862,13 @@ public class AcCsvDoclet extends Doclet {
 		return buf.toString();
 	}
 	
-	private static String annotation(ProgramElementDoc m) {
+	private static String annotation(ProgramElementDoc m, Set<String> annoSet) {
 		List<String> b = new ArrayList<String>();
 		for (AnnotationDesc an : m.annotations()) {
+			// アノテーションが処理済の場合スキップ
+			if (annoSet.contains(an.toString())) {
+				continue;
+			}
 			StringBuffer sb = new StringBuffer("@");
 			sb.append(an.annotationType().name());
 			if (an.elementValues().length > 0) {
@@ -921,11 +884,50 @@ public class AcCsvDoclet extends Doclet {
 				}
 				sb.append(")");
 			}
+			b.add(sb.toString());
 		}
 
 		return join(b, "\n");
 	}
+	
+	// MethodDoc#overridenMethod はインターフェースメソッドの実装は判定しないので、
+	// インターフェースを実装する場合を追加で確認
+	private static MethodDoc overrides(MethodDoc m) {
+		MethodDoc ret = m.overriddenMethod();
+		if (ret == null) {
+			for (ClassDoc c = m.containingClass(); c != null; c = c.superclass()) {
+				for (ClassDoc itf : c.interfaces()) {
+					ret = overrides_inner(m, itf);
+					if (ret != null) {
+						break;
+					}
+				}
+				if (ret != null) {
+					break;
+				}
+			}
+		}
+		return ret;
+	}
 
+	// メソッドmがインターフェースcのメソッドを実装するかどうかを判定
+	private static MethodDoc overrides_inner(MethodDoc m, ClassDoc c) {
+		for (MethodDoc m2 : c.methods()) {
+			if (m.overrides(m2)) {
+				return m2;
+			}
+		}
+
+		for (ClassDoc itf : c.interfaces()) {
+			MethodDoc tmp = overrides_inner(m, itf);
+			if (tmp != null) {
+				return tmp;
+			}
+		}
+		
+		return null;
+	}
+	
 	private static class DocComparator implements Comparator<Doc> {
 
 		@Override
@@ -943,5 +945,13 @@ public class AcCsvDoclet extends Doclet {
 			return v1.toString().compareTo(v2.toString());
 		}
 
+	}
+	
+	/**
+	 * @deprecated
+	 */
+	@Deprecated
+	public void hoge() {
+		
 	}
 }
