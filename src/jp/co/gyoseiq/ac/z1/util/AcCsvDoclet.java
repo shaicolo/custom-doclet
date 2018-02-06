@@ -537,7 +537,7 @@ public class AcCsvDoclet extends Doclet {
 			buf.add("備考・アノテーション・AF呼出");
 		} else {
 			// TODO: とりあえずアノテーションのみ＋オーバーライド対象
-			bikou.add(annotation(m, annoSet));
+			bikou.addAll(annotation(m, annoSet));
 			buf.add(join(bikou, "\n"));
 		}
 
@@ -622,7 +622,7 @@ public class AcCsvDoclet extends Doclet {
 			buf.add("備考・アノテーション");
 		} else {
 			// TODO: とりあえずアノテーションのみ
-			buf.add(annotation(m, annoSet));
+			buf.add(join(annotation(m, annoSet),"\n"));
 		}
 
 		// ------------------------------------------------------------------------------
@@ -862,7 +862,7 @@ public class AcCsvDoclet extends Doclet {
 		return buf.toString();
 	}
 	
-	private static String annotation(ProgramElementDoc m, Set<String> annoSet) {
+	private static List<String> annotation(ProgramElementDoc m, Set<String> annoSet) {
 		List<String> b = new ArrayList<String>();
 		for (AnnotationDesc an : m.annotations()) {
 			// アノテーションが処理済の場合スキップ
@@ -887,7 +887,7 @@ public class AcCsvDoclet extends Doclet {
 			b.add(sb.toString());
 		}
 
-		return join(b, "\n");
+		return b;
 	}
 	
 	// MethodDoc#overridenMethod はインターフェースメソッドの実装は判定しないので、
