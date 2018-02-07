@@ -29,7 +29,6 @@ import com.sun.javadoc.Doclet;
 import com.sun.javadoc.ExecutableMemberDoc;
 import com.sun.javadoc.FieldDoc;
 import com.sun.javadoc.LanguageVersion;
-import com.sun.javadoc.MemberDoc;
 import com.sun.javadoc.MethodDoc;
 import com.sun.javadoc.ParamTag;
 import com.sun.javadoc.Parameter;
@@ -38,11 +37,8 @@ import com.sun.javadoc.RootDoc;
 import com.sun.javadoc.Tag;
 import com.sun.javadoc.Type;
 
-// TODO: 空欄に「－」を出力
 // TODO: 型パラメータの出力
-// TODO: クラスのJavadocコメント
 // TODO: 概要シートの内容
-// TODO: 定数ではないフィールドの初期値
 // TODO: ビヘイビア一覧（※多分ムリ）
 
 /**
@@ -60,10 +56,10 @@ public class AcCsvDoclet extends Doclet {
 	public static boolean start(RootDoc rootDoc) {
 
 		cx = new Context(rootDoc.options());
-		
+
 		// 改行コードを\nにセット
 		System.setProperty("line.separator", "\n");
-		
+
 		printValue("currentDir", new File("aaa").getAbsolutePath());
 		for (ClassDoc c : rootDoc.classes()) {
 			printClass(c);
@@ -76,20 +72,20 @@ public class AcCsvDoclet extends Doclet {
 	public static LanguageVersion languageVersion() {
 		return LanguageVersion.JAVA_1_5;
 	}
-	
+
 	// サポートする追加オプションの定義
 	public static int optionLength(String option) {
-		
+
 		// 出力フォルダー指定
 		if (option.equals("-destdir")) {
 			return 2;
 		}
-		
+
 		// 表示リビジョン番号指定
 		if (option.equals("-revision")) {
 			return 2;
 		}
-		
+
 		return 0;
 	}
 
@@ -126,14 +122,14 @@ public class AcCsvDoclet extends Doclet {
 			// 出力フォルダー作成
 			destdir = new File(params.get("-destdir")[0]);
 		}
-		
+
 		void startClass(ClassDoc c) {
 			System.out.println("Class:" + c.qualifiedName());
 
 			// 現在のクラス情報を設定
 			ClassDoc prevClass = currentClass;
 			currentClass = c;
-			
+
 			// ソース読込（変数初期値取得用）
 			if (prevClass == null || !currentClass.position().file().equals(prevClass.position().file())) {
 				try {
@@ -151,7 +147,7 @@ public class AcCsvDoclet extends Doclet {
 						System.err.println("WARNING: " + c.position().file().getName() + " の文字数が " + cb.length + " を超えます。");
 					}
 					currentSourceBuf = tabConvert(new String(cb, 0, off), 8);
-					
+
 					Matcher mcr = RX_LINE.matcher(currentSourceBuf);
 					sourceLinePosList = new ArrayList<Integer>();
 					while (mcr.find()) {
@@ -240,12 +236,12 @@ public class AcCsvDoclet extends Doclet {
 		List<List<String>> javadoc_field = new ArrayList<List<String>>();
 
 		separator("CLASS START " + c.name());
-		printValue("name", c.name());
-		printValue("package", c.containingPackage().name());
-		printValue("containingClass", c.containingClass() == null ? "－" : c.containingClass().name());
-		printValue("pos.file", c.position().file().getName());
-		printValue("pos.line", c.position().line());
-		printValue("interface", join(
+		printValue("クラス名", c.name());
+		printValue("パッケージ名", c.containingPackage().name());
+		//printValue("containingClass", c.containingClass() == null ? "－" : c.containingClass().name());
+		//printValue("pos.file", c.position().file().getName());
+		//printValue("pos.line", c.position().line());
+		printValue("インターフェース", join(
 			map(Arrays.asList((Object[]) c.interfaces()), new MapProc<Object>() {
 				public Object proc(Object value) {
 					ClassDoc itf = (ClassDoc) value;
@@ -253,9 +249,10 @@ public class AcCsvDoclet extends Doclet {
 				}
 			}), ", "
 		));
-		printValue("parent", c.superclassType() == null ? "－" : c.superclassType().qualifiedTypeName());
-		printValue("abstract?", c.isAbstract());
-		printValue("comment", deleteHtmlTag(description(c.commentText())));
+		printValue("親クラス", c.superclassType() == null ? "－" : c.superclassType().qualifiedTypeName());
+		//printValue("abstract?", c.isAbstract());
+		cx.out.println();
+		printValue("概要", deleteHtmlTag(description(c.commentText())));
 
 		// ------------------------------------------------------------------------------
 		separator("メソッド一覧");
@@ -274,7 +271,7 @@ public class AcCsvDoclet extends Doclet {
 
 			// 名前順にソート
 			Arrays.sort(cons, comparator);
-			
+
 			// 出力
 			for (ExecutableMemberDoc em : cons) {
 				printメソッド一覧(++mno, em);
@@ -387,7 +384,7 @@ public class AcCsvDoclet extends Doclet {
 					return value.isStatic();
 				}
 			});
-			
+
 			// ※残ったフィールドがインスタンス変数
 
 			// 出力
@@ -428,10 +425,16 @@ public class AcCsvDoclet extends Doclet {
 			// 見出し出力
 			printRec(getJavadoc生成用コメント(0, null));
 
+			separator2("クラス");
+			printRec(getJavadoc生成用コメント(1, cx.currentClass));
+
+			cx.out.println();
 			separator2("メソッド");
 			for (List<String> buf : javadoc_method) {
 				printRec(buf);
 			}
+
+			cx.out.println();
 			separator2("変数");
 			for (List<String> buf : javadoc_field) {
 				printRec(buf);
@@ -482,7 +485,7 @@ public class AcCsvDoclet extends Doclet {
 			MethodDoc mOverride = null;
 			if (m.isMethod()) {
 				mOverride = overrides((MethodDoc)m);
-				
+
 				// Overrideアノテーションも確認
 				for (AnnotationDesc an : m.annotations()) {
 					if (an.annotationType().name().equals("Override")) {
@@ -491,10 +494,10 @@ public class AcCsvDoclet extends Doclet {
 					}
 				}
 			}
-			
+
 			if (bOverride || mOverride != null) {
 				b.add("オーバーライド");
-				
+
 				// オーバーライドするメソッドが取得できていれば備考を追加
 				if (mOverride != null) {
 					bikou.add("オーバーライド: " + mOverride.containingClass().name());
@@ -534,10 +537,10 @@ public class AcCsvDoclet extends Doclet {
 				b.append(typeName(((MethodDoc)m).returnType()));
 				b.append(" ");
 				for (Tag t : m.tags("@return")) {
-					
+
 					// 戻り値コメントを取得
 					String retComment = deleteHtmlTag(t.text());
-					
+
 					//（最初の行のみ）
 					String retCommentFirst = retComment.replaceAll("\\n.*", "");
 
@@ -728,7 +731,7 @@ public class AcCsvDoclet extends Doclet {
 	 * @param no 番号
 	 * @param m 変数定義
 	 */
-	private static List<String> getJavadoc生成用コメント(int no, MemberDoc m) {
+	private static List<String> getJavadoc生成用コメント(int no, Doc m) {
 		List<String> buf = new ArrayList<String>();
 
 		// ------------------------------------------------------------------------------
@@ -805,7 +808,7 @@ public class AcCsvDoclet extends Doclet {
 	 */
 	private static void printValue(String label, Object value) {
 		String tmp;
-		
+
 		if (value == null) {
 			tmp = "－";
 		} else {
@@ -932,11 +935,11 @@ public class AcCsvDoclet extends Doclet {
 				.replaceAll("\n([ \t\r]*\n)+", "\n\n")		// 連続する空行を１つの空行にする
 				.replaceAll("\\{@[^ }]* +([^ }]*)\\}|\\{@[^ }]* +[^ }]* +([^}]*)\\}", "$1$2"); // @link形式のタグを削除;
 	}
-	
+
 	private static String description(String commentText) {
 		return commentText.replaceAll("^ ", "").replaceAll("\n ", "\n").replaceAll("\n$", "");
 	}
-	
+
 	private static String fullComment(String rawCommentText) {
 		if (rawCommentText == null || rawCommentText.length() == 0) {
 			return "－";
@@ -944,7 +947,7 @@ public class AcCsvDoclet extends Doclet {
 			return "/**\n *" + rawCommentText.replaceAll("\n", "\n *") + "/";
 		}
 	}
-	
+
 	// javadocの引数の型や戻り値の型に記載する型名を編集
 	// パッケージ修飾…なし
 	// パラメータ型引数…あり
@@ -968,7 +971,7 @@ public class AcCsvDoclet extends Doclet {
 
 		return buf.toString();
 	}
-	
+
 	private static List<String> annotation(ProgramElementDoc m, Set<String> annoSet) {
 		List<String> b = new ArrayList<String>();
 		for (AnnotationDesc an : m.annotations()) {
@@ -996,7 +999,7 @@ public class AcCsvDoclet extends Doclet {
 
 		return b;
 	}
-	
+
 	// MethodDoc#overridenMethod はインターフェースメソッドの実装は判定しないので、
 	// インターフェースを実装する場合を追加で確認
 	private static MethodDoc overrides(MethodDoc m) {
@@ -1031,10 +1034,10 @@ public class AcCsvDoclet extends Doclet {
 				return tmp;
 			}
 		}
-		
+
 		return null;
 	}
-	
+
 	private static class DocComparator implements Comparator<Doc> {
 
 		@Override
@@ -1051,7 +1054,7 @@ public class AcCsvDoclet extends Doclet {
 			}
 			// まずCaseInsensitiveで比較
 			int ret = v1.toString().toLowerCase().compareTo(v2.toString().toLowerCase());
-			
+
 			// 一致する場合は念のためCaseSensitiveで比較
 			if (ret == 0) {
 				ret = v1.toString().compareTo(v2.toString());
@@ -1060,7 +1063,7 @@ public class AcCsvDoclet extends Doclet {
 		}
 
 	}
-	
+
 	// タブ文字をtabstopに指定したタブストップ位置までのスペースに置換します。
 	private static String tabConvert(String str, int tabstop) {
 		StringBuffer sb = new StringBuffer();
@@ -1082,12 +1085,12 @@ public class AcCsvDoclet extends Doclet {
 		}
 		return sb.toString();
 	}
-	
+
 	/**
 	 * @deprecated
 	 */
 	@Deprecated
 	public void hoge() {
-		
+
 	}
 }
