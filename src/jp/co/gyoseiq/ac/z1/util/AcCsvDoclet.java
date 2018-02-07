@@ -1,10 +1,12 @@
 package jp.co.gyoseiq.ac.z1.util;
 
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.OutputStreamWriter;
-import java.io.PrintWriter;
+import java.io.InputStreamReader;
+import java.io.PrintStream;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -16,6 +18,8 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import com.sun.javadoc.AnnotationDesc;
 import com.sun.javadoc.ClassDoc;
@@ -34,6 +38,13 @@ import com.sun.javadoc.RootDoc;
 import com.sun.javadoc.Tag;
 import com.sun.javadoc.Type;
 
+// TODO: 空欄に「－」を出力
+// TODO: 型パラメータの出力
+// TODO: クラスのJavadocコメント
+// TODO: 概要シートの内容
+// TODO: 定数ではないフィールドの初期値
+// TODO: ビヘイビア一覧（※多分ムリ）
+
 /**
  * プログラム仕様書に記述するドキュメント情報を<b>CSV<b>として出力するDocletです。
  * javadocツール実行時に、docletとして本クラスを指定することで出力できます。
@@ -42,11 +53,16 @@ import com.sun.javadoc.Type;
  */
 public class AcCsvDoclet extends Doclet {
 	static Context cx;
+	static final Pattern RX_LINE = Pattern.compile("[^\n]*\n");
+	static final Pattern RX_FIELDINITIALIZER = Pattern.compile("^[ \\t\\r\\n]*=[ \\t\\r\\n]*([^;]*);");
 	static DocComparator comparator = new DocComparator();
 
 	public static boolean start(RootDoc rootDoc) {
 
 		cx = new Context(rootDoc.options());
+		
+		// 改行コードを\nにセット
+		System.setProperty("line.separator", "\n");
 		
 		printValue("currentDir", new File("aaa").getAbsolutePath());
 		for (ClassDoc c : rootDoc.classes()) {
@@ -82,15 +98,16 @@ public class AcCsvDoclet extends Doclet {
 	 * @author shaicolo
 	 */
 	private static class Context implements Serializable {
-		transient private final PrintWriter sysout = new PrintWriter(System.out);
-		transient PrintWriter out;
+		transient PrintStream out;
 		File destdir;
 		ClassDoc currentClass;
+		String currentSourceBuf;
+		List<Integer> sourceLinePosList;
 		Map<String, String[]> params = new HashMap<String, String[]>();
 		Map<String, Set<String>> overloadMap;
 
 		public Context(String[][] args) {
-			out = sysout;
+			out = System.out;
 
 			// デフォルトパラメータ
 			params.put("-destdir", new String[]{"work/progSpec"});
@@ -114,11 +131,42 @@ public class AcCsvDoclet extends Doclet {
 			System.out.println("Class:" + c.qualifiedName());
 
 			// 現在のクラス情報を設定
+			ClassDoc prevClass = currentClass;
 			currentClass = c;
+			
+			// ソース読込（変数初期値取得用）
+			if (prevClass == null || !currentClass.position().file().equals(prevClass.position().file())) {
+				try {
+					char[] cb = new char[1048576];
+					BufferedReader br = new BufferedReader(new InputStreamReader(new FileInputStream(c.position().file()), "UTF-8"));
+					int off = 0;
+					int len = 0;
+					while (off < cb.length && len >= 0) {
+						len = br.read(cb, off, cb.length - off);
+						if (len > 0) {
+							off += len;
+						}
+					}
+					if (len > 0) {
+						System.err.println("WARNING: " + c.position().file().getName() + " の文字数が " + cb.length + " を超えます。");
+					}
+					currentSourceBuf = tabConvert(new String(cb, 0, off), 8);
+					
+					Matcher mcr = RX_LINE.matcher(currentSourceBuf);
+					sourceLinePosList = new ArrayList<Integer>();
+					while (mcr.find()) {
+						sourceLinePosList.add(mcr.start());
+					}
+				} catch (IOException ex) {
+					ex.printStackTrace();
+					throw new RuntimeException(ex);
+				}
+			}
+
 			overloadMap = newOverloadMap(c);
 
 			try {
-				if (out != null && out != sysout) {
+				if (out != null && out != System.out) {
 					out.close();
 				}
 				File pkgdir = new File(destdir, c.containingPackage().name());
@@ -126,20 +174,23 @@ public class AcCsvDoclet extends Doclet {
 				if (!outdir.exists()) {
 					outdir.mkdirs();
 				}
-				File outf = new File(outdir, c.name() + ".txt");
+				File outf = new File(outdir, c.name() + ".csv");
 				System.out.println(" -> " + outf.getAbsolutePath());
-				out = new PrintWriter(
-						new OutputStreamWriter(new FileOutputStream(outf), "UTF-8")
-				);
+				out = new PrintStream(new FileOutputStream(outf), false, "UTF-8");
+
+				// BOM
+				out.write(0xef);
+				out.write(0xbb);
+				out.write(0xbf);
 			} catch (IOException ex) {
 				throw new RuntimeException(ex);
 			}
 		}
 		void endClass() {
-			if (out != null && out != sysout) {
+			if (out != null && out != System.out) {
 				out.close();
 			}
-			out = sysout;
+			out = System.out;
 		}
 
 		/**
@@ -191,15 +242,20 @@ public class AcCsvDoclet extends Doclet {
 		separator("CLASS START " + c.name());
 		printValue("name", c.name());
 		printValue("package", c.containingPackage().name());
-		printValue("containingClass", c.containingClass() == null ? "-" : c.containingClass().name());
+		printValue("containingClass", c.containingClass() == null ? "－" : c.containingClass().name());
 		printValue("pos.file", c.position().file().getName());
 		printValue("pos.line", c.position().line());
-		for (ClassDoc itf : c.interfaces()) {
-			printValue("interface", itf.qualifiedName());
-		}
-		printValue("parent", c.superclassType() == null ? "" : c.superclassType().qualifiedTypeName());
+		printValue("interface", join(
+			map(Arrays.asList((Object[]) c.interfaces()), new MapProc<Object>() {
+				public Object proc(Object value) {
+					ClassDoc itf = (ClassDoc) value;
+					return itf.qualifiedName();
+				}
+			}), ", "
+		));
+		printValue("parent", c.superclassType() == null ? "－" : c.superclassType().qualifiedTypeName());
 		printValue("abstract?", c.isAbstract());
-		printValue("comment", deleteHtmlTag(c.commentText()));
+		printValue("comment", deleteHtmlTag(description(c.commentText())));
 
 		// ------------------------------------------------------------------------------
 		separator("メソッド一覧");
@@ -266,11 +322,17 @@ public class AcCsvDoclet extends Doclet {
 				printメソッド一覧(++mno, em);
 				javadoc_method.add(getJavadoc生成用コメント(mno, em));
 			}
+			if (meth.size() == 0) {
+				printRec(Arrays.asList(new String[]{"－","－","－","－","－"}));
+			}
 
 			separator2("抽象メソッド");
 			for (ExecutableMemberDoc em : meth_abstract) {
 				printメソッド一覧(++mno, em);
 				javadoc_method.add(getJavadoc生成用コメント(mno, em));
+			}
+			if (meth_abstract.size() == 0) {
+				printRec(Arrays.asList(new String[]{"－","－","－","－","－"}));
 			}
 
 			separator2("クラスメソッド");
@@ -278,11 +340,17 @@ public class AcCsvDoclet extends Doclet {
 				printメソッド一覧(++mno, em);
 				javadoc_method.add(getJavadoc生成用コメント(mno, em));
 			}
+			if (meth_static.size() == 0) {
+				printRec(Arrays.asList(new String[]{"－","－","－","－","－"}));
+			}
 
 			separator2("継承禁止メソッド");
 			for (ExecutableMemberDoc em : meth_final) {
 				printメソッド一覧(++mno, em);
 				javadoc_method.add(getJavadoc生成用コメント(mno, em));
+			}
+			if (meth_final.size() == 0) {
+				printRec(Arrays.asList(new String[]{"－","－","－","－","－"}));
 			}
 		}
 
@@ -304,8 +372,12 @@ public class AcCsvDoclet extends Doclet {
 					return value.isFinal();
 				}
 			});
-			// enum定数を追加して名前順ソート
-			flds_final.addAll(Arrays.asList(c.enumConstants()));
+			// 直下に定義された列挙型の定数を追加して名前順ソート
+			for (ClassDoc ic : c.innerClasses()) {
+				if (ic.isEnum()) {
+					flds_final.addAll(Arrays.asList(ic.enumConstants()));
+				}
+			}
 			Collections.sort(flds_final, comparator);
 
 			// クラス変数（staticフィールド）仕分け
@@ -326,17 +398,26 @@ public class AcCsvDoclet extends Doclet {
 				print変数一覧(++fno, f);
 				javadoc_field.add(getJavadoc生成用コメント(fno, f));
 			}
+			if (flds_final.size() == 0) {
+				printRec(Arrays.asList(new String[]{"－","－","－","－","－"}));
+			}
 
 			separator2("クラス変数");
 			for (FieldDoc f : flds_static) {
 				print変数一覧(++fno, f);
 				javadoc_field.add(getJavadoc生成用コメント(fno, f));
 			}
+			if (flds_static.size() == 0) {
+				printRec(Arrays.asList(new String[]{"－","－","－","－","－"}));
+			}
 
 			separator2("インスタンス変数");
 			for (FieldDoc f : flds) {
 				print変数一覧(++fno, f);
 				javadoc_field.add(getJavadoc生成用コメント(fno, f));
+			}
+			if (flds.size() == 0) {
+				printRec(Arrays.asList(new String[]{"－","－","－","－","－"}));
 			}
 		}
 
@@ -602,7 +683,17 @@ public class AcCsvDoclet extends Doclet {
 			if (m.constantValueExpression() != null) {
 				buf.add(m.constantValueExpression());
 			} else {
-				buf.add("");
+				// 定数以外の場合は、ソースから記述を探す
+				int lno = m.position().line() - 1;
+				int cpos = m.position().column() - 1 + m.name().length();
+				int spos = cx.sourceLinePosList.get(lno) + cpos;
+
+				Matcher mcr = RX_FIELDINITIALIZER.matcher(cx.currentSourceBuf.substring(spos));
+				if (mcr.find()) {
+					buf.add(mcr.group(1).replaceAll("[ \\t\\r\\n]+$", ""));
+				} else {
+					buf.add("");
+				}
 			}
 		}
 
@@ -689,9 +780,11 @@ public class AcCsvDoclet extends Doclet {
 		if (label != null) {
 			label = " " + label + " ";
 		}
+		cx.out.println();
 		cx.out.println("#-----------------------------------------------------------");
 		cx.out.println("# " + label);
 		cx.out.println("#-----------------------------------------------------------");
+		cx.out.println();
 	}
 
 	/**
@@ -711,7 +804,17 @@ public class AcCsvDoclet extends Doclet {
 	 * @param value 値
 	 */
 	private static void printValue(String label, Object value) {
-		cx.out.println(label + ": " + value);
+		String tmp;
+		
+		if (value == null) {
+			tmp = "－";
+		} else {
+			tmp = value.toString();
+			if (tmp.length() == 0) {
+				tmp = "－";
+			}
+		}
+		printRec(Arrays.asList(new String[]{label + ":", tmp}));
 	}
 
 
@@ -720,10 +823,14 @@ public class AcCsvDoclet extends Doclet {
 			join(
 				map(rec, new MapProc<String>() {
 					public String proc(String value) {
-						return "\"" + value.replaceAll("\"", "\"\"") + "\"";
+						if (value == null || value.length() == 0) {
+							return "－";
+						} else {
+							return "\"" + value.replaceAll("\"", "\"\"") + "\"";
+						}
 					}
 				}),
-				"\t"
+				","
 			)
 		);
 	}
@@ -832,7 +939,7 @@ public class AcCsvDoclet extends Doclet {
 	
 	private static String fullComment(String rawCommentText) {
 		if (rawCommentText == null || rawCommentText.length() == 0) {
-			return "-";
+			return "－";
 		} else {
 			return "/**\n *" + rawCommentText.replaceAll("\n", "\n *") + "/";
 		}
@@ -942,9 +1049,38 @@ public class AcCsvDoclet extends Doclet {
 				v2.append(lpadNum(countChar(((ExecutableMemberDoc) o2).flatSignature(), ','), 5));
 				v2.append(((ExecutableMemberDoc) o2).flatSignature());
 			}
-			return v1.toString().compareTo(v2.toString());
+			// まずCaseInsensitiveで比較
+			int ret = v1.toString().toLowerCase().compareTo(v2.toString().toLowerCase());
+			
+			// 一致する場合は念のためCaseSensitiveで比較
+			if (ret == 0) {
+				ret = v1.toString().compareTo(v2.toString());
+			}
+			return ret;
 		}
 
+	}
+	
+	// タブ文字をtabstopに指定したタブストップ位置までのスペースに置換します。
+	private static String tabConvert(String str, int tabstop) {
+		StringBuffer sb = new StringBuffer();
+		int column = 0;
+		for (char c : str.toCharArray()) {
+			if (c == '\t') {
+				int cc = tabstop - (column % tabstop);
+				for (int i = 0; i < cc; i++) {
+					sb.append(" ");
+				}
+				column += cc;
+			} else if (c == '\n') {
+				sb.append(c);
+				column = 0;
+			} else {
+				sb.append(c);
+				column++;
+			}
+		}
+		return sb.toString();
 	}
 	
 	/**
