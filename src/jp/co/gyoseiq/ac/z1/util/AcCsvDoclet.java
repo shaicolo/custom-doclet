@@ -36,21 +36,29 @@ import com.sun.javadoc.ProgramElementDoc;
 import com.sun.javadoc.RootDoc;
 import com.sun.javadoc.Tag;
 import com.sun.javadoc.Type;
+import com.sun.javadoc.TypeVariable;
 
-// TODO: 型パラメータの出力
-// TODO: 概要シートの内容
+// TODO: 一部のHTMLタグを認識（<li>→箇条書き表示　など）
+// TODO: アノテーションの引数が変な風に出る
+// TODO: 不要なアノテーション（SupressWarningなど）を消す
+// TODO: 型パラメータの出力（※必要？）
 // TODO: ビヘイビア一覧（※多分ムリ）
 
 /**
- * プログラム仕様書に記述するドキュメント情報を<b>CSV<b>として出力するDocletです。
+ * プログラム仕様書に記述するドキュメント情報を<b>CSV</b>として出力するDocletです。
  * javadocツール実行時に、docletとして本クラスを指定することで出力できます。
- * jp.co.gyoseiq.ac.z1.util.AcCsvDoclet
+ * 【使用方法】
+ * javadocコマンドでdocletに指定してください。
+ * 【対象外・制限事項】
+ * テステス
  * @author shaicolo
  */
 public class AcCsvDoclet extends Doclet {
 	static Context cx;
 	static final Pattern RX_LINE = Pattern.compile("[^\n]*\n");
 	static final Pattern RX_FIELDINITIALIZER = Pattern.compile("^[ \\t\\r\\n]*=[ \\t\\r\\n]*([^;]*);");
+	static final Pattern RX_SIYOU = Pattern.compile("(.*)【使用方法】*(.*)", Pattern.DOTALL);
+	static final Pattern RX_SEIGEN = Pattern.compile("(.*)【対象外・制限事項】*(.*)", Pattern.DOTALL);
 	static DocComparator comparator = new DocComparator();
 
 	public static boolean start(RootDoc rootDoc) {
@@ -61,11 +69,35 @@ public class AcCsvDoclet extends Doclet {
 		System.setProperty("line.separator", "\n");
 
 		printValue("currentDir", new File("aaa").getAbsolutePath());
+		Map<String,Exception> resultMap = new HashMap<String, Exception>();
 		for (ClassDoc c : rootDoc.classes()) {
-			printClass(c);
+			try {
+				printClass(c);
+				resultMap.put(c.name(), null);
+			} catch (Exception ex) {
+				resultMap.put(c.name(), ex);
+				ex.printStackTrace();
+			}
+		}
+		
+		System.out.println("=====================================================");
+		System.out.flush();
+		
+		boolean result = true;
+		for (Map.Entry<String, Exception> i : resultMap.entrySet()) {
+			String cls = i.getKey();
+			Exception ex = i.getValue();
+			if (ex == null) {
+				System.out.println(cls + "：正常終了");
+			} else {
+				System.err.println(cls + "：エラー：" + ex);
+				result = false;
+			}
 		}
 
-		return true;
+		System.out.println("=====================================================");
+
+		return result;
 	}
 
 	// Java1.5記法をサポート
@@ -165,8 +197,7 @@ public class AcCsvDoclet extends Doclet {
 				if (out != null && out != System.out) {
 					out.close();
 				}
-				File pkgdir = new File(destdir, c.containingPackage().name());
-				File outdir = new File(pkgdir, c.position().file().getName());
+				File outdir = new File(destdir, c.position().file().getName().replaceAll("\\.java$", ""));
 				if (!outdir.exists()) {
 					outdir.mkdirs();
 				}
@@ -236,11 +267,12 @@ public class AcCsvDoclet extends Doclet {
 		List<List<String>> javadoc_field = new ArrayList<List<String>>();
 
 		separator("CLASS START " + c.name());
-		printValue("クラス名", c.name());
-		printValue("パッケージ名", c.containingPackage().name());
+		printValue("パッケージ", c.containingPackage().name());
+		printValue("クラス", genericClassName(c));
 		//printValue("containingClass", c.containingClass() == null ? "－" : c.containingClass().name());
 		//printValue("pos.file", c.position().file().getName());
 		//printValue("pos.line", c.position().line());
+		printValue("継承クラス", c.superclassType() == null ? "－" : c.superclassType().qualifiedTypeName());
 		printValue("インターフェース", join(
 			map(Arrays.asList((Object[]) c.interfaces()), new MapProc<Object>() {
 				public Object proc(Object value) {
@@ -249,10 +281,26 @@ public class AcCsvDoclet extends Doclet {
 				}
 			}), ", "
 		));
-		printValue("親クラス", c.superclassType() == null ? "－" : c.superclassType().qualifiedTypeName());
 		//printValue("abstract?", c.isAbstract());
 		cx.out.println();
-		printValue("概要", deleteHtmlTag(description(c.commentText())));
+		{
+			String strGaiyou = deleteHtmlTag(description(c.commentText()));
+			String strSiyou = null;
+			String strSeigen = null;
+			for (Matcher mcr = RX_SEIGEN.matcher(strGaiyou); mcr.matches();) {
+				strSeigen = mcr.group(2);
+				strGaiyou = mcr.group(1);
+				break;
+			}
+			for (Matcher mcr = RX_SIYOU.matcher(strGaiyou); mcr.matches();) {
+				strSiyou = mcr.group(2);
+				strGaiyou = mcr.group(1);
+				break;
+			}
+			printValue("【概要】", strGaiyou);
+			printValue("【使用方法】", strSiyou);
+			printValue("【対象外・制限事項】", strSeigen);
+		}
 
 		// ------------------------------------------------------------------------------
 		separator("メソッド一覧");
@@ -762,6 +810,15 @@ public class AcCsvDoclet extends Doclet {
 		}
 
 		// ------------------------------------------------------------------------------
+		// 備考
+		// ------------------------------------------------------------------------------
+		if (m == null) {
+			buf.add("備考");
+		} else {
+			buf.add("　");
+		}
+
+		// ------------------------------------------------------------------------------
 		// リビジョン
 		// ------------------------------------------------------------------------------
 		if (m == null) {
@@ -813,11 +870,8 @@ public class AcCsvDoclet extends Doclet {
 			tmp = "－";
 		} else {
 			tmp = value.toString();
-			if (tmp.length() == 0) {
-				tmp = "－";
-			}
 		}
-		printRec(Arrays.asList(new String[]{label + ":", tmp}));
+		printRec(Arrays.asList(new String[]{label, tmp}));
 	}
 
 
@@ -826,11 +880,19 @@ public class AcCsvDoclet extends Doclet {
 			join(
 				map(rec, new MapProc<String>() {
 					public String proc(String value) {
-						if (value == null || value.length() == 0) {
+						if (value == null) {
 							return "－";
-						} else {
-							return "\"" + value.replaceAll("\"", "\"\"") + "\"";
 						}
+						// 行頭・行末の改行を削除
+						value = value.replaceAll("^[ \t\r\n]*|[ \t\r\n]*$", "");
+
+						// 行頭・行末の改行を削除
+						value = value.replaceAll("^[ \t\r\n]*|[ \t\r\n]*$", "");
+						
+						if (value.length() == 0) {
+							return "－";
+						}
+						return "\"" + value.replaceAll("\"", "\"\"") + "\"";
 					}
 				}),
 				","
@@ -936,6 +998,7 @@ public class AcCsvDoclet extends Doclet {
 				.replaceAll("\\{@[^ }]* +([^ }]*)\\}|\\{@[^ }]* +[^ }]* +([^}]*)\\}", "$1$2"); // @link形式のタグを削除;
 	}
 
+	// Javadocコメント形式のテキストに含まれる行頭の空白文字を削除
 	private static String description(String commentText) {
 		return commentText.replaceAll("^ ", "").replaceAll("\n ", "\n").replaceAll("\n$", "");
 	}
@@ -970,6 +1033,26 @@ public class AcCsvDoclet extends Doclet {
 		buf.append(t.dimension());
 
 		return buf.toString();
+	}
+	
+	// パラメータ引数名を付与したクラス名を返す
+	private static String genericClassName(ClassDoc c) {
+		StringBuffer ret = new StringBuffer(c.name());
+		if (c.typeParameters().length > 0) {
+			ret.append("<");
+			ret.append(join(
+				map(Arrays.asList((Object[]) c.typeParameters()), new MapProc<Object>() {
+					@Override
+					public Object proc(Object value) {
+						TypeVariable tv = (TypeVariable) value;
+						return tv.toString();
+					}
+				}), ","
+			));
+			ret.append(">");
+		}
+		
+		return ret.toString();
 	}
 
 	private static List<String> annotation(ProgramElementDoc m, Set<String> annoSet) {
