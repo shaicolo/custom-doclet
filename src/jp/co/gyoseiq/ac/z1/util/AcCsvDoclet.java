@@ -1125,6 +1125,15 @@ public class AcCsvDoclet extends Doclet {
 
 		@Override
 		public int compare(Doc o1, Doc o2) {
+			
+			// まずアクセス修飾子で比較
+			Integer ac1 = accessTypeNumber(o1);
+			Integer ac2 = accessTypeNumber(o2);
+			if (ac1 != ac2) {
+				return ac1.compareTo(ac2);
+			}
+			
+			// 次に名前で比較
 			StringBuffer v1 = new StringBuffer(o1.name());
 			StringBuffer v2 = new StringBuffer(o2.name());
 			if (o1 instanceof ExecutableMemberDoc) {
@@ -1135,7 +1144,7 @@ public class AcCsvDoclet extends Doclet {
 				v2.append(lpadNum(countChar(((ExecutableMemberDoc) o2).flatSignature(), ','), 5));
 				v2.append(((ExecutableMemberDoc) o2).flatSignature());
 			}
-			// まずCaseInsensitiveで比較
+			// ...まずCaseInsensitiveで比較
 			int ret = v1.toString().toLowerCase().compareTo(v2.toString().toLowerCase());
 
 			// 一致する場合は念のためCaseSensitiveで比較
@@ -1145,6 +1154,27 @@ public class AcCsvDoclet extends Doclet {
 			return ret;
 		}
 
+	}
+	
+	private static int accessTypeNumber(Doc d) {
+		if (d instanceof ProgramElementDoc) {
+			ProgramElementDoc p = (ProgramElementDoc) d;
+			if (p.isPublic()) {
+				return 1;
+			}
+			if (p.isProtected()) {
+				return 2;
+			}
+			if (p.isPackagePrivate()) {
+				return 3;
+			}
+			if (p.isPrivate()) {
+				return 4;
+			}
+			throw new IllegalStateException("unknown access of " + d);
+		} else {
+			return 0;
+		}
 	}
 
 	// タブ文字をtabstopに指定したタブストップ位置までのスペースに置換します。
